@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"time"
 )
 
 type HTTPRequestSchema struct {
@@ -72,17 +75,18 @@ func parseHeaders(h []string) map[string]string {
 
 	for _, val := range h {
 		header := strings.Split(strings.TrimSpace(val), ":")
-		headers[header[0]] = header[1]
-		headers[header[0]] = header[1]
+		headers[strings.ToLower(header[0])] = header[1]
 	}
 
 	return headers
 }
 
-func parseBody(b []string) {
-	// for key, val := range b {
-	// 	fmt.Println(key, val)
-	// }
+func parseBody(b []string) string {
+	var body strings.Builder
+	for _, val := range b {
+		body.WriteString(strings.TrimSpace(val))
+	}
+	return body.String()
 }
 
 func parseHTTPRequest(r string) HTTPRequestSchema {
@@ -90,28 +94,82 @@ func parseHTTPRequest(r string) HTTPRequestSchema {
 	httpRequestLine := parseRequestLine(message[0])
 	var i int
 	var v string
+	var httpBody string
 	for i, v = range message[1:] {
 		if len(v) == 0 {
-			parseBody(message[i+1:])
+			httpBody = parseBody(message[i+2:])
 			break
 		}
 	}
 
-	hostHeaders := parseHeaders(message[1 : i+1])
+	httpHeaders := parseHeaders(message[1 : i+1])
 
 	return HTTPRequestSchema{
 		RequestLine: httpRequestLine,
-		Headers:     hostHeaders,
+		Headers:     httpHeaders,
+		Body:        httpBody,
 	}
-
 }
 
 func make_http_request(r HTTPRequestSchema) {
-	fmt.Println(r)
+
+	client := &http.Client{
+		Timeout: time.Second * 60,
+	}
+
+	host, ok := r.Headers["host"]
+
+	var url string
+	if ok {
+		url = "https://" + strings.TrimSpace(host)
+	} else {
+		fmt.Println("Host header doesn't exist!")
+	}
+
+	var req *http.Request
+	var err error
+
+	if (r.Method == "POST") || (r.Method == "PUT") {
+		req, err = http.NewRequest(r.Method, url+r.Path, strings.NewReader(r.Body))
+
+		if err != nil {
+			fmt.Println("Error while forming request!")
+			return
+		}
+	} else {
+		req, err = http.NewRequest(r.Method, url+r.Path, nil)
+
+		if err != nil {
+			fmt.Println("Error while forming request!")
+			return
+		}
+	}
+
+	for k, v := range r.Headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := client.Do(req)
+
+	if err != nil {
+		fmt.Println("Error")
+		return
+	}
+
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("Error reading response body:", err)
+		return
+	}
+
+	fmt.Println(string(bodyBytes))
+
 }
 
 func main() {
-	httpRawRequest := `GET /to/some/path HTTP/1.1
+	httpRawRequest := `GET /posts HTTP/1.1
 	Host: nihalchoudhary.in
 	Origin: nihalchoudhary.in
 	Cookie: session_token
@@ -119,10 +177,5 @@ func main() {
 	username=admin&password=admin
 	`
 	httpRequest := parseHTTPRequest(httpRawRequest)
-
-	fmt.Println(httpRequest.RequestLine.Method)
-	fmt.Println(httpRequest.RequestLine.Path)
-	fmt.Println(httpRequest.RequestLine.HTTPVersion)
-	fmt.Println(httpRequest.Headers)
 	make_http_request(httpRequest)
 }
